@@ -112,9 +112,35 @@ def _tight_bbox(alpha):
     return xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
 
 
+def _decontaminate(car_rgba):
+    """Foreground colour decontamination (the 'Defringe' / 'Decontaminate Colors' fix):
+    grow the car's trusted interior colours OUTWARD into the semi-transparent edge band,
+    so the rim carries CAR colour instead of the original photo's background bleed. This
+    is what kills the white halo when compositing onto a different (studio) background."""
+    arr = np.array(car_rgba)
+    rgb = arr[:, :, :3].astype(np.float32)
+    a = arr[:, :, 3].astype(np.float32) / 255.0
+    solid = (a > 0.75).astype(np.float32)              # colours we trust (opaque interior)
+    if solid.sum() == 0:
+        return car_rgba
+    col = rgb * solid[:, :, None]                      # premultiplied known colours
+    w = solid.copy()
+    for _ in range(8):                                 # diffuse interior colour outward
+        col = cv2.GaussianBlur(col, (0, 0), 2.0)
+        w = cv2.GaussianBlur(w, (0, 0), 2.0)
+        col = col * (1 - solid)[:, :, None] + rgb * solid[:, :, None]   # re-assert interior
+        w = w * (1 - solid) + solid
+    grown = col / (w[:, :, None] + 1e-6)
+    edge = np.clip((0.95 - a) / 0.95, 0, 1)[:, :, None]                 # 0 interior -> 1 rim
+    rgb2 = rgb * (1 - edge) + grown * edge                              # rim takes car colour
+    arr[:, :, :3] = np.clip(rgb2, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr, "RGBA")
+
+
 def feather_edges(car_rgba):
-    """Sharpen the matte, trim the light background fringe (despill the rim), then
-    anti-alias — removes the white halo from cutouts shot on bright backgrounds."""
+    """Decontaminate edge colours (defringe), shift the matte inward, then anti-alias —
+    removes the white halo from cutouts shot on bright backgrounds."""
+    car_rgba = _decontaminate(car_rgba)               # <-- kills the colour fringe first
     arr = np.array(car_rgba).astype(np.float32)
     alpha = arr[:, :, 3]
     alpha = np.clip((alpha - 55.0) * 2.5, 0, 255)
