@@ -1,0 +1,27 @@
+# ---- Python (backend) ----
+backend/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+backend/*.onnx
+backend/u2net/
+.u2net/
+
+# ---- Node / Next (frontend) ----
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.vercel/
+
+# ---- Local env (contains the backend URL/IP) ----
+.env
+.env.local
+frontend/.env.local
+
+# ---- Scratch / outputs / logs ----
+sample_outputs/
+*.log
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
