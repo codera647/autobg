@@ -167,33 +167,44 @@ def contact_info(car_img):
 
 def make_ground_shadow(car_img, x, y, contact_y, fx0, fx1):
     """
-    Anchored contact shadow under the real footprint:
-      - soft ambient ellipse (diffuse light),
-      - tight dark core ellipse right at the wheels (kills 'floating').
-    Footprint-driven, so it adapts to the car's width and angle.
+    Contour-following contact shadow: lays the shadow along the car's actual bottom
+    silhouette (lowest opaque pixel per column), so it grounds the FRONT wheel (low
+    in a 3/4 view) AND the REAR wheel (higher) — no more 'lifted at the back'.
+    Soft ambient band + tighter dark core, tinted dark-grey (not pure black).
     """
-    ch = car_img.height
-    gy = y + contact_y                       # absolute ground line
-    foot_cx = x + (fx0 + fx1) // 2
-    foot_w = max(14, fx1 - fx0)
+    a = np.array(car_img)[:, :, 3]
+    nh, nw = a.shape
+    mask = a > 40
+    if mask.sum() == 0:
+        return Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
 
-    layer = np.zeros((CANVAS_H, CANVAS_W), dtype=np.float32)
+    # bottom contour: lowest opaque row per column -> map to canvas ground y per column
+    idx = np.where(mask, np.arange(nh)[:, None], -1)
+    lowest = idx.max(axis=0)
+    ground = np.full(CANVAS_W, -1, dtype=np.int32)
+    cols = np.where(lowest >= 0)[0]
+    gx = np.clip(x + cols, 0, CANVAS_W - 1)
+    gy = y + lowest[cols]
+    inb = (gy >= 0) & (gy < CANVAS_H)
+    ground[gx[inb]] = gy[inb]
 
-    # 1) soft ambient
-    cv2.ellipse(layer, (foot_cx, gy),
-                (int(foot_w * 0.62), max(8, int(ch * 0.11))), 0, 0, 360, 0.52, -1)
-    layer = cv2.GaussianBlur(layer, (0, 0), sigmaX=26, sigmaY=11)
+    rows = np.arange(CANVAS_H)[:, None]
+    g = ground[None, :]
+    vmask = g >= 0
+    drop = max(8, int(nh * 0.05))
 
-    # 2) tight dark core (the anchor that grounds the car)
-    core = np.zeros((CANVAS_H, CANVAS_W), dtype=np.float32)
-    cv2.ellipse(core, (foot_cx, gy),
-                (int(foot_w * 0.52), max(5, int(ch * 0.04))), 0, 0, 360, 1.0, -1)
-    core = cv2.GaussianBlur(core, (0, 0), sigmaX=12, sigmaY=5)
+    # soft ambient band hugging the contour
+    band = ((rows >= g - 3) & (rows <= g + drop) & vmask).astype(np.float32)
+    shadow = cv2.GaussianBlur(band, (0, 0), sigmaX=16, sigmaY=8) * 0.5
 
-    combined = np.clip(layer + core * 0.85, 0, 1)
-    a8 = (combined * 255).astype(np.uint8)
+    # tighter dark core right at the contact line (grounds the wheels)
+    core_band = ((rows >= g - 1) & (rows <= g + max(3, int(nh * 0.02))) & vmask).astype(np.float32)
+    core = cv2.GaussianBlur(core_band, (0, 0), sigmaX=6, sigmaY=2)
+    shadow = np.clip(shadow + core * 0.55, 0, 1)
+
     patch = np.zeros((CANVAS_H, CANVAS_W, 4), dtype=np.uint8)
-    patch[:, :, 3] = a8
+    patch[:, :, 0] = 30; patch[:, :, 1] = 30; patch[:, :, 2] = 34   # tinted, not pure black
+    patch[:, :, 3] = (shadow * 255).astype(np.uint8)
     return Image.fromarray(patch, mode="RGBA")
 
 
