@@ -212,7 +212,7 @@ def make_ground_shadow(car_img, x, y, contact_y, fx0, fx1):
     return Image.fromarray(patch, mode="RGBA")
 
 
-def make_reflection(car_img, x, y, contact_y, opacity=0.13, compress=0.5):
+def make_reflection(car_img, x, y, contact_y, opacity=0.30, compress=0.62):
     """
     Perspective-aware floor reflection: each column is mirrored about ITS OWN
     contact point (seamless on 3/4 views), vertically COMPRESSED (foreshortened,
@@ -254,7 +254,7 @@ def make_reflection(car_img, x, y, contact_y, opacity=0.13, compress=0.5):
 # ---- Phase 2: deterministic realism pass (no models, no new deps) -------------
 REALISM = os.environ.get("REALISM", "1") != "0"
 WB_STRENGTH = float(os.environ.get("WB_STRENGTH", "0.15"))   # studio white-balance
-LIGHTWRAP = float(os.environ.get("LIGHTWRAP", "0.22"))       # bg light onto edges
+LIGHTWRAP = float(os.environ.get("LIGHTWRAP", "0.12"))       # bg light onto edges
 GRAIN = float(os.environ.get("GRAIN", "2.5"))                # unify fg/bg texture
 
 
