@@ -7,8 +7,8 @@ const BACKEND =
 
 // Fixed defaults — no pickers in the UI.
 const TEMPLATE = "white_studio";
-const MODE = "ai";
-const EST_MS = 20000; // rough AI generation time, drives the progress curve
+const MODE = "template";
+const EST_MS = 4000; // template compositing is fast
 
 export default function Home() {
   const [file, setFile] = useState(null);

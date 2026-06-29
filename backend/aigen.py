@@ -42,9 +42,10 @@ CN_ID = os.environ.get("CN_MODEL", "diffusers/controlnet-canny-sdxl-1.0")
 VAE_ID = "madebyollin/sdxl-vae-fp16-fix"
 
 PROMPTS = {
-    "white_studio": ("professional automotive advertising photograph, parked in a bright seamless white "
-        "photo studio, soft diffused overhead studio lighting, glossy reflective white floor with a soft "
-        "reflection, premium luxury car commercial, photorealistic, ultra detailed"),
+    "white_studio": ("professional automotive studio photograph, a car on a seamless plain white studio "
+        "backdrop, smooth empty light grey wall, clean glossy reflective light floor with a soft mirror "
+        "reflection, soft even diffused studio lighting, minimal uncluttered empty photo studio, "
+        "photorealistic, ultra detailed"),
     "dark_studio": ("professional automotive advertising photograph, in a dark luxury studio, dramatic soft "
         "rim lighting, glossy black reflective floor, moody premium showroom, cinematic lighting, photorealistic, ultra detailed"),
     "gradient_showroom": ("professional automotive advertising photograph, in a modern luxury car showroom "
@@ -54,7 +55,9 @@ PROMPTS = {
 NEG = ("blurry, distorted, deformed, extra wheels, duplicate, cartoon, illustration, low quality, jpeg "
        "artifacts, text, watermark, logo, people, person, cluttered, messy, glowing outline, bright halo, "
        "rim light glow, light spill, white fringe, harsh edges, overexposed floor, blown highlights, "
-       "bright glow around car, light bleed, halo on floor")
+       "bright glow around car, light bleed, halo on floor, showroom interior, dealership, room interior, "
+       "ceiling, ceiling lights, recessed lights, windows, plants, furniture, columns, shelves, signage, "
+       "busy background, cluttered background")
 
 _PIPE = None
 

@@ -11,15 +11,18 @@ v4 — robust grounding that adapts to ANY car image / angle:
   -> composite.
 """
 
+import os
 import numpy as np
 import cv2
 from PIL import Image, ImageFilter
 
 CANVAS_W, CANVAS_H = 1200, 900
+PLATE_DIR = os.path.join(os.path.dirname(__file__), "plates")
 
 TEMPLATES = {
-    "white_studio": {"label": "White Studio", "wall_top": (232, 232, 236),
-        "floor_near": (236, 236, 240), "horizon": 0.62, "glossy": True, "glow": 20},
+    "white_studio": {"label": "White Studio", "wall_top": (239, 239, 240),
+        "wall_bottom": (246, 246, 247), "floor_far": (244, 244, 246), "floor_near": (228, 228, 231),
+        "horizon": 0.58, "glossy": True, "tiled": True, "baseboard": (208, 195, 170)},
     "dark_studio": {"label": "Dark Studio", "wall_top": (30, 32, 38),
         "floor_near": (40, 42, 50), "horizon": 0.64, "glossy": True, "glow": 34},
     "gradient_showroom": {"label": "Showroom Gradient", "wall_top": (196, 214, 234),
@@ -39,17 +42,67 @@ def _vertical_gradient(height, width, color_top, color_bottom):
     return np.repeat(rows[:, None, :], width, axis=1).astype(np.uint8)
 
 
+def _draw_floor_tiles(img, horizon_y, grout=(206, 206, 211)):
+    """Draw a one-point-perspective tile grid on the floor region (in place).
+    Larger tiles to match the reference studio."""
+    H, W = img.shape[:2]
+    floor_h = H - horizon_y
+    vx = W // 2                                   # vanishing point x (centre)
+    # horizontal tile lines — fewer = bigger tiles; bunch up near the horizon
+    n = 8
+    for i in range(1, n + 1):
+        t = i / n
+        yy = int(horizon_y + floor_h * (t ** 1.95))
+        if horizon_y < yy < H:
+            cv2.line(img, (0, yy), (W, yy), grout, 1, cv2.LINE_AA)
+    # vertical tile lines — fewer, converge toward the vanishing point
+    cols = 6
+    spacing = W // cols
+    for j in range(-cols - 3, cols + 4):
+        xb = vx + j * spacing
+        cv2.line(img, (xb, H - 1), (vx, horizon_y), grout, 1, cv2.LINE_AA)
+
+
 def build_template(name):
-    """Seamless studio background: continuous gradient + soft central glow."""
+    """Studio plate: a saved PNG plate if present, else a built wall+tile floor."""
     cfg = TEMPLATES.get(name) or TEMPLATES["white_studio"]
     horizon_y = int(CANVAS_H * cfg["horizon"])
-    base = _vertical_gradient(CANVAS_H, CANVAS_W, cfg["wall_top"], cfg["floor_near"]).astype(np.float32)
+
+    # Prefer a real background plate (e.g. the interviewer's studio with the car
+    # removed) saved as plates/<name>.png — gives a pixel-exact, consistent background.
+    plate = os.path.join(PLATE_DIR, name + ".png")
+    if os.path.exists(plate):
+        bg = Image.open(plate).convert("RGB").resize((CANVAS_W, CANVAS_H), Image.LANCZOS)
+        return bg.convert("RGBA"), int(CANVAS_H * cfg.get("plate_horizon", cfg["horizon"])), cfg["glossy"]
+
+    img = np.zeros((CANVAS_H, CANVAS_W, 3), dtype=np.float32)
+    # wall (top) and floor (bottom), split at the horizon
+    img[:horizon_y] = _vertical_gradient(
+        horizon_y, CANVAS_W, cfg["wall_top"], cfg.get("wall_bottom", cfg["wall_top"]))
+    img[horizon_y:] = _vertical_gradient(
+        CANVAS_H - horizon_y, CANVAS_W,
+        cfg.get("floor_far", cfg.get("floor_near")), cfg["floor_near"])
+
+    # thin wood/tan baseboard where the wall meets the floor (like the reference)
+    bb = cfg.get("baseboard")
+    if bb:
+        bb_h = max(5, int(CANVAS_H * 0.011))
+        img[max(0, horizon_y - bb_h):horizon_y] = np.array(bb, dtype=np.float32)
+
+    # faint contact line just below the baseboard
+    img[horizon_y:horizon_y + 2] *= 0.95
+
+    if cfg.get("tiled"):
+        _draw_floor_tiles(img, horizon_y)
+
+    # soft airy glow toward the centre
     yy, xx = np.mgrid[0:CANVAS_H, 0:CANVAS_W]
-    cx, cy = CANVAS_W / 2.0, CANVAS_H * 0.40
-    d = np.sqrt(((xx - cx) / (CANVAS_W * 0.70)) ** 2 + ((yy - cy) / (CANVAS_H * 0.62)) ** 2)
+    cx, cy = CANVAS_W / 2.0, CANVAS_H * 0.42
+    d = np.sqrt(((xx - cx) / (CANVAS_W * 0.8)) ** 2 + ((yy - cy) / (CANVAS_H * 0.72)) ** 2)
     glow = np.clip(1.0 - d, 0.0, 1.0)[:, :, None]
-    base = (base + glow * cfg.get("glow", 18)).clip(0, 255).astype(np.uint8)
-    return Image.fromarray(base, mode="RGB").convert("RGBA"), horizon_y, cfg["glossy"]
+    img = (img + glow * cfg.get("glow", 8)).clip(0, 255)
+
+    return Image.fromarray(img.astype(np.uint8), mode="RGB").convert("RGBA"), horizon_y, cfg["glossy"]
 
 
 def _tight_bbox(alpha):
