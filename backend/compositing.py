@@ -16,6 +16,12 @@ import numpy as np
 import cv2
 from PIL import Image, ImageFilter
 
+try:
+    from pymatting import estimate_foreground_ml
+    _HAS_PYMATTING = True
+except Exception:
+    _HAS_PYMATTING = False
+
 CANVAS_W, CANVAS_H = 1200, 900
 PLATE_DIR = os.path.join(os.path.dirname(__file__), "plates")
 
@@ -137,19 +143,43 @@ def _decontaminate(car_rgba):
     return Image.fromarray(arr, "RGBA")
 
 
+def _estimate_fg(rgb01, a01, cap=1280):
+    """True foreground colour via PyMatting unmixing (I = aF + (1-a)B  ->  solve F).
+    Capped resolution for speed: F is smooth, so estimate at <=cap px and upscale."""
+    h, w = a01.shape
+    s = min(1.0, cap / float(max(h, w)))
+    if s < 1.0:
+        rs = (max(1, int(w * s)), max(1, int(h * s)))
+        img_s = cv2.resize(rgb01, rs, interpolation=cv2.INTER_AREA)
+        a_s = cv2.resize(a01, rs, interpolation=cv2.INTER_AREA)
+        F = cv2.resize(estimate_foreground_ml(img_s, a_s), (w, h), interpolation=cv2.INTER_LINEAR)
+    else:
+        F = estimate_foreground_ml(rgb01, a01)
+    return np.clip(F, 0.0, 1.0)
+
+
 def feather_edges(car_rgba):
-    """Decontaminate edge colours (defringe), shift the matte inward, then anti-alias —
-    removes the white halo from cutouts shot on bright backgrounds."""
-    car_rgba = _decontaminate(car_rgba)               # <-- kills the colour fringe first
-    arr = np.array(car_rgba).astype(np.float32)
-    alpha = arr[:, :, 3]
-    alpha = np.clip((alpha - 55.0) * 2.5, 0, 255)
-    a8 = alpha.astype(np.uint8)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    a8 = cv2.erode(a8, kernel, iterations=2)          # pull in 2px -> drops the bright rim
+    """Production edge pipeline (accurate + efficient):
+      1. FOREGROUND ESTIMATION — unmix the true car colour (kills the white halo at its
+         source; FBA/PyMatting). No background bleed survives onto the studio.
+      2. Gentle matte refine — contract 1px to drop any background over-extension, then
+         anti-alias. No aggressive binarisation (which caused aliasing + ate thin parts)."""
+    arr = np.array(car_rgba)
+    a01 = arr[:, :, 3].astype(np.float64) / 255.0
+    if a01.max() == 0:
+        return car_rgba
+
+    if _HAS_PYMATTING:
+        rgb01 = arr[:, :, :3].astype(np.float64) / 255.0
+        F = _estimate_fg(rgb01, a01)
+        rgb_out = (F * 255.0).clip(0, 255).astype(np.uint8)
+    else:                                              # safe fallback if pkg missing
+        rgb_out = np.array(_decontaminate(car_rgba))[:, :, :3]
+
+    a8 = arr[:, :, 3]
+    a8 = cv2.erode(a8, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=1)
     a8 = cv2.GaussianBlur(a8, (3, 3), 0)
-    arr[:, :, 3] = a8
-    return Image.fromarray(arr.astype(np.uint8), mode="RGBA")
+    return Image.fromarray(np.dstack([rgb_out, a8]), mode="RGBA")
 
 
 def autoscale_and_place(car_rgba, floor_line_y, width_ratio=0.70, max_h_ratio=0.56):
