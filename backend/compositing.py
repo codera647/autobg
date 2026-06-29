@@ -197,16 +197,17 @@ def make_ground_shadow(car_img, x, y, contact_y, fx0, fx1):
     return Image.fromarray(patch, mode="RGBA")
 
 
-def make_reflection(car_img, x, y, contact_y, opacity=0.16):
-    """Mirror the car about the CONTACT line (zero gap) + fade + slight blur."""
+def make_reflection(car_img, x, y, contact_y, opacity=0.11):
+    """Subtle mirrored reflection on the floor — faster fade + softer (studio sheen,
+    not a glass mirror)."""
     car_top = car_img.crop((0, 0, car_img.width, max(1, contact_y)))
     refl = car_top.transpose(Image.FLIP_TOP_BOTTOM)
     arr = np.array(refl).astype(np.float32)
     h = arr.shape[0]
-    grad = (np.linspace(1.0, 0.0, h, dtype=np.float32) ** 1.8)[:, None]
+    grad = (np.linspace(1.0, 0.0, h, dtype=np.float32) ** 2.4)[:, None]   # fades quicker
     arr[:, :, 3] = arr[:, :, 3] * grad * opacity
     refl = Image.fromarray(arr.clip(0, 255).astype(np.uint8), mode="RGBA")
-    refl = refl.filter(ImageFilter.GaussianBlur(1.2))
+    refl = refl.filter(ImageFilter.GaussianBlur(2.0))                      # softer
     out = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     out.alpha_composite(refl, (x, y + contact_y))
     return out
