@@ -8,15 +8,41 @@ const BACKEND =
 // Fixed defaults — no pickers in the UI.
 const TEMPLATE = "white_studio";
 const MODE = "ai";
+const EST_MS = 20000; // rough AI generation time, drives the progress curve
 
 export default function Home() {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [resultUrl, setResultUrl] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
   const [drag, setDrag] = useState(false);
   const inputRef = useRef(null);
+  const timer = useRef(null);
+
+  function startProgress() {
+    setProgress(0);
+    const start = performance.now();
+    clearInterval(timer.current);
+    timer.current = setInterval(() => {
+      const t = performance.now() - start;
+      // asymptotic ease toward 90% — never "completes" until the response lands
+      const pct = 90 * (1 - Math.exp(-t / (EST_MS * 0.45)));
+      setProgress(pct);
+    }, 100);
+  }
+
+  function stopProgress(done) {
+    clearInterval(timer.current);
+    timer.current = null;
+    if (done) {
+      setProgress(100);
+      setTimeout(() => setProgress(0), 600);
+    } else {
+      setProgress(0);
+    }
+  }
 
   function onPick(f) {
     if (!f || !f.type.startsWith("image/")) {
@@ -38,6 +64,7 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setResultUrl(null);
+    startProgress();
     try {
       const form = new FormData();
       form.append("file", file);
@@ -50,8 +77,10 @@ export default function Home() {
       }
       const blob = await res.blob();
       setResultUrl(URL.createObjectURL(blob));
+      stopProgress(true);
     } catch (e) {
       setError(e.message || "Something went wrong.");
+      stopProgress(false);
     } finally {
       setLoading(false);
     }
@@ -102,7 +131,14 @@ export default function Home() {
           <h2>Result</h2>
           <div className="result-box">
             {loading ? (
-              <div className="spinner" />
+              <div className="progress-wrap">
+                <div className="progress-track">
+                  <div className="progress-bar" style={{ width: `${progress}%` }} />
+                </div>
+                <div className="progress-label">
+                  Generating… {Math.round(progress)}%
+                </div>
+              </div>
             ) : resultUrl ? (
               <img src={resultUrl} alt="result" />
             ) : (
