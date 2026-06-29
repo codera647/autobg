@@ -126,7 +126,11 @@ def feather_edges(car_rgba):
     return Image.fromarray(arr.astype(np.uint8), mode="RGBA")
 
 
-def autoscale_and_place(car_rgba, floor_line_y, width_ratio=0.66, max_h_ratio=0.46):
+def autoscale_and_place(car_rgba, floor_line_y, width_ratio=0.70, max_h_ratio=0.56):
+    """Real-world size normalization: scale every car to a consistent on-floor LENGTH
+    (width target). The height cap is relaxed so tall vehicles (SUVs) keep that length
+    and simply stand taller — instead of being shrunk to fit — giving consistent scale
+    across sedans / supercars / SUVs."""
     arr = np.array(car_rgba)
     l, t, r, b = _tight_bbox(arr[:, :, 3])
     car = car_rgba.crop((l, t, r, b))
@@ -208,19 +212,42 @@ def make_ground_shadow(car_img, x, y, contact_y, fx0, fx1):
     return Image.fromarray(patch, mode="RGBA")
 
 
-def make_reflection(car_img, x, y, contact_y, opacity=0.11):
-    """Subtle mirrored reflection on the floor — faster fade + softer (studio sheen,
-    not a glass mirror)."""
-    car_top = car_img.crop((0, 0, car_img.width, max(1, contact_y)))
-    refl = car_top.transpose(Image.FLIP_TOP_BOTTOM)
-    arr = np.array(refl).astype(np.float32)
-    h = arr.shape[0]
-    grad = (np.linspace(1.0, 0.0, h, dtype=np.float32) ** 2.4)[:, None]   # fades quicker
-    arr[:, :, 3] = arr[:, :, 3] * grad * opacity
-    refl = Image.fromarray(arr.clip(0, 255).astype(np.uint8), mode="RGBA")
-    refl = refl.filter(ImageFilter.GaussianBlur(2.0))                      # softer
-    out = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
-    out.alpha_composite(refl, (x, y + contact_y))
+def make_reflection(car_img, x, y, contact_y, opacity=0.13, compress=0.5):
+    """
+    Perspective-aware floor reflection: each column is mirrored about ITS OWN
+    contact point (seamless on 3/4 views), vertically COMPRESSED (foreshortened,
+    since the floor recedes from the camera), then faded + blurred with distance.
+    Far more realistic than a flat full-car flip.
+    """
+    arr = np.array(car_img).astype(np.float32)
+    nh, nw, _ = arr.shape
+    mask = arr[:, :, 3] > 40
+    idx = np.where(mask, np.arange(nh)[:, None], -1)
+    contour = idx.max(axis=0)                      # per-column lowest opaque row
+    refl = np.zeros((CANVAS_H, CANVAS_W, 4), dtype=np.float32)
+    rows = np.arange(CANVAS_H)
+    fade_len = max(2.0, nh * 0.45 * compress)      # canvas rows over which it fades out
+
+    for c in range(nw):
+        Lc = contour[c]
+        if Lc < 0:
+            continue
+        gx = x + c
+        if gx < 0 or gx >= CANVAS_W:
+            continue
+        base = y + Lc                              # this column's contact row on canvas
+        db = rows - base                           # distance below the contact
+        v = db >= 0
+        src = (Lc - db / compress)                 # walk UP the car (de-compressed)
+        v &= (src >= 0) & (src <= Lc)
+        rr = rows[v]
+        sr = src[v].astype(np.int32)
+        fade = np.clip(1.0 - db[v] / fade_len, 0, 1) ** 1.6
+        refl[rr, gx, 0:3] = arr[sr, c, 0:3]
+        refl[rr, gx, 3] = arr[sr, c, 3] * fade * opacity
+
+    out = Image.fromarray(refl.clip(0, 255).astype(np.uint8), mode="RGBA")
+    out = out.filter(ImageFilter.GaussianBlur(1.8))
     return out
 
 
