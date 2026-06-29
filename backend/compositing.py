@@ -113,17 +113,17 @@ def _tight_bbox(alpha):
 
 
 def feather_edges(car_rgba):
-    """Sharpen the matte (kills BiRefNet's semi-transparent ghost halo), trim
-    the background rim, then anti-alias."""
-    arr = np.array(car_rgba)
-    alpha = arr[:, :, 3].astype(np.float32)
-    alpha = np.clip((alpha - 50.0) * 2.2, 0, 255)
+    """Sharpen the matte, trim the light background fringe (despill the rim), then
+    anti-alias — removes the white halo from cutouts shot on bright backgrounds."""
+    arr = np.array(car_rgba).astype(np.float32)
+    alpha = arr[:, :, 3]
+    alpha = np.clip((alpha - 55.0) * 2.5, 0, 255)
     a8 = alpha.astype(np.uint8)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    a8 = cv2.erode(a8, kernel, iterations=1)
+    a8 = cv2.erode(a8, kernel, iterations=2)          # pull in 2px -> drops the bright rim
     a8 = cv2.GaussianBlur(a8, (3, 3), 0)
     arr[:, :, 3] = a8
-    return Image.fromarray(arr, mode="RGBA")
+    return Image.fromarray(arr.astype(np.uint8), mode="RGBA")
 
 
 def autoscale_and_place(car_rgba, floor_line_y, width_ratio=0.66, max_h_ratio=0.46):
@@ -181,16 +181,16 @@ def make_ground_shadow(car_img, x, y, contact_y, fx0, fx1):
 
     # 1) soft ambient
     cv2.ellipse(layer, (foot_cx, gy),
-                (int(foot_w * 0.60), max(7, int(ch * 0.10))), 0, 0, 360, 0.42, -1)
-    layer = cv2.GaussianBlur(layer, (0, 0), sigmaX=24, sigmaY=10)
+                (int(foot_w * 0.62), max(8, int(ch * 0.11))), 0, 0, 360, 0.52, -1)
+    layer = cv2.GaussianBlur(layer, (0, 0), sigmaX=26, sigmaY=11)
 
-    # 2) tight dark core (the anchor)
+    # 2) tight dark core (the anchor that grounds the car)
     core = np.zeros((CANVAS_H, CANVAS_W), dtype=np.float32)
     cv2.ellipse(core, (foot_cx, gy),
-                (int(foot_w * 0.50), max(4, int(ch * 0.035))), 0, 0, 360, 1.0, -1)
-    core = cv2.GaussianBlur(core, (0, 0), sigmaX=11, sigmaY=4)
+                (int(foot_w * 0.52), max(5, int(ch * 0.04))), 0, 0, 360, 1.0, -1)
+    core = cv2.GaussianBlur(core, (0, 0), sigmaX=12, sigmaY=5)
 
-    combined = np.clip(layer + core * 0.65, 0, 1)
+    combined = np.clip(layer + core * 0.85, 0, 1)
     a8 = (combined * 255).astype(np.uint8)
     patch = np.zeros((CANVAS_H, CANVAS_W, 4), dtype=np.uint8)
     patch[:, :, 3] = a8
