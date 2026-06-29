@@ -238,7 +238,7 @@ def make_ground_shadow(car_img, x, y, contact_y, fx0, fx1):
     return Image.fromarray(patch, mode="RGBA")
 
 
-def make_reflection(car_img, x, y, contact_y, opacity=0.30, compress=0.62):
+def make_reflection(car_img, x, y, contact_y, opacity=0.40, compress=0.72):
     """
     Perspective-aware floor reflection: each column is mirrored about ITS OWN
     contact point (seamless on 3/4 views), vertically COMPRESSED (foreshortened,
@@ -273,7 +273,7 @@ def make_reflection(car_img, x, y, contact_y, opacity=0.30, compress=0.62):
         refl[rr, gx, 3] = arr[sr, c, 3] * fade * opacity
 
     out = Image.fromarray(refl.clip(0, 255).astype(np.uint8), mode="RGBA")
-    out = out.filter(ImageFilter.GaussianBlur(1.8))
+    out = out.filter(ImageFilter.GaussianBlur(1.5))
     return out
 
 
@@ -282,6 +282,7 @@ REALISM = os.environ.get("REALISM", "1") != "0"
 WB_STRENGTH = float(os.environ.get("WB_STRENGTH", "0.15"))   # studio white-balance
 LIGHTWRAP = float(os.environ.get("LIGHTWRAP", "0.12"))       # bg light onto edges
 GRAIN = float(os.environ.get("GRAIN", "2.5"))                # unify fg/bg texture
+BOUNCE = float(os.environ.get("BOUNCE", "0.10"))             # ambient floor-bounce relight
 
 
 def _harmonize_wb(car, strength=WB_STRENGTH):
@@ -296,6 +297,26 @@ def _harmonize_wb(car, strength=WB_STRENGTH):
     for i in (1, 2):                                        # a, b -> toward neutral 128
         ch = lab[:, :, i]
         lab[:, :, i] = ch + (128.0 - ch[m].mean()) * strength
+    arr[:, :, :3] = cv2.cvtColor(lab.clip(0, 255).astype(np.uint8), cv2.COLOR_LAB2RGB)
+    return Image.fromarray(arr, "RGBA")
+
+
+def _ambient_bounce(car, lift=BOUNCE, floor_bias=0.55):
+    """'Normalize lighting to match the backdrop' (what Spyne/CarStudio do): lift the
+    car's SHADOW regions toward the bright studio, weighted toward the lower body
+    (white-floor bounce). Only fills shadows — highlights & geometry untouched — so the
+    car reads as lit by this room without being washed out or distorted."""
+    arr = np.array(car)
+    m = arr[:, :, 3] > 10
+    if m.sum() == 0:
+        return car
+    lab = cv2.cvtColor(arr[:, :, :3], cv2.COLOR_RGB2LAB).astype(np.float32)
+    L = lab[:, :, 0]
+    nh = arr.shape[0]
+    grad = np.linspace(1.0 - floor_bias, 1.0, nh, dtype=np.float32)[:, None]   # bottom lifts more
+    shadow_w = np.clip(1.0 - L / 255.0, 0, 1)                                  # darker = lift more
+    addL = lift * 255.0 * grad * shadow_w
+    lab[:, :, 0] = np.where(m, np.clip(L + addL, 0, 255), L)
     arr[:, :, :3] = cv2.cvtColor(lab.clip(0, 255).astype(np.uint8), cv2.COLOR_LAB2RGB)
     return Image.fromarray(arr, "RGBA")
 
@@ -334,6 +355,7 @@ def composite(car_rgba, template_name):
     car = feather_edges(car_rgba)
     if REALISM:
         car = _harmonize_wb(car)                           # match studio white balance
+        car = _ambient_bounce(car)                         # normalize lighting to backdrop
     # sit the car DOWN on the floor (in front of the wall), not at the wall/floor line
     car_ground = int(CANVAS_H * 0.74)
     car, x, y = autoscale_and_place(car, car_ground)
