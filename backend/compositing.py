@@ -251,9 +251,63 @@ def make_reflection(car_img, x, y, contact_y, opacity=0.13, compress=0.5):
     return out
 
 
+# ---- Phase 2: deterministic realism pass (no models, no new deps) -------------
+REALISM = os.environ.get("REALISM", "1") != "0"
+WB_STRENGTH = float(os.environ.get("WB_STRENGTH", "0.15"))   # studio white-balance
+LIGHTWRAP = float(os.environ.get("LIGHTWRAP", "0.22"))       # bg light onto edges
+GRAIN = float(os.environ.get("GRAIN", "2.5"))                # unify fg/bg texture
+
+
+def _harmonize_wb(car, strength=WB_STRENGTH):
+    """Neutralize the car's colour cast toward the studio's neutral white light
+    (shift a,b channel means toward 128). Touches ONLY white balance — never the
+    car's exposure/contrast/geometry — so it can't wash out or distort the car."""
+    arr = np.array(car)
+    m = arr[:, :, 3] > 10
+    if m.sum() == 0:
+        return car
+    lab = cv2.cvtColor(arr[:, :, :3], cv2.COLOR_RGB2LAB).astype(np.float32)
+    for i in (1, 2):                                        # a, b -> toward neutral 128
+        ch = lab[:, :, i]
+        lab[:, :, i] = ch + (128.0 - ch[m].mean()) * strength
+    arr[:, :, :3] = cv2.cvtColor(lab.clip(0, 255).astype(np.uint8), cv2.COLOR_LAB2RGB)
+    return Image.fromarray(arr, "RGBA")
+
+
+def _light_wrap(comp, scene_bg, car, x, y, width=14, blur=18, strength=LIGHTWRAP):
+    """Wrap the studio light onto the car's edges (screen-blend a blurred copy of the
+    background into a thin band just inside the silhouette) so the edge stops reading
+    as 'pasted', while the car stays crisp."""
+    W, H = comp.size
+    ca = np.array(car)[:, :, 3]
+    nh, nw = ca.shape
+    A = np.zeros((H, W), np.float32)
+    A[y:y + nh, x:x + nw] = ca / 255.0
+    Ab = (A > 0.5).astype(np.uint8)
+    er = cv2.erode(Ab, np.ones((width, width), np.uint8))
+    rim = ((Ab - er) > 0).astype(np.float32)
+    rim = cv2.GaussianBlur(rim, (0, 0), width / 2.0) * A
+    c = np.array(comp).astype(np.float32) / 255.0
+    b = cv2.GaussianBlur(np.array(scene_bg).astype(np.float32) / 255.0, (0, 0), blur)
+    screen = 1.0 - (1.0 - c) * (1.0 - b)
+    wr = (rim * strength)[:, :, None]
+    out = c * (1.0 - wr) + screen * wr
+    return Image.fromarray((out * 255).clip(0, 255).astype(np.uint8), "RGB")
+
+
+def _add_grain(img, amount=GRAIN):
+    """Subtle, seeded (deterministic) mono film grain to unify fg/bg texture."""
+    arr = np.array(img).astype(np.float32)
+    noise = np.random.default_rng(0).normal(0.0, amount, arr.shape[:2])[:, :, None]
+    return Image.fromarray((arr + noise).clip(0, 255).astype(np.uint8), "RGB")
+
+
 def composite(car_rgba, template_name):
     bg, floor_line_y, glossy = build_template(template_name)
+    scene_bg = bg.copy()                                   # clean studio (light-wrap ref)
     car = feather_edges(car_rgba)
+    if REALISM:
+        car = _harmonize_wb(car)                           # match studio white balance
     # sit the car DOWN on the floor (in front of the wall), not at the wall/floor line
     car_ground = int(CANVAS_H * 0.74)
     car, x, y = autoscale_and_place(car, car_ground)
@@ -262,4 +316,8 @@ def composite(car_rgba, template_name):
         bg.alpha_composite(make_reflection(car, x, y, contact_y))
     bg.alpha_composite(make_ground_shadow(car, x, y, contact_y, fx0, fx1))
     bg.alpha_composite(car, (x, y))
-    return bg.convert("RGB")
+    out = bg.convert("RGB")
+    if REALISM:
+        out = _light_wrap(out, scene_bg.convert("RGB"), car, x, y)   # integrate edges
+        out = _add_grain(out)                                        # unify texture
+    return out
