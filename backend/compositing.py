@@ -126,7 +126,7 @@ def feather_edges(car_rgba):
     return Image.fromarray(arr, mode="RGBA")
 
 
-def autoscale_and_place(car_rgba, floor_line_y, width_ratio=0.70, max_h_ratio=0.50):
+def autoscale_and_place(car_rgba, floor_line_y, width_ratio=0.66, max_h_ratio=0.46):
     arr = np.array(car_rgba)
     l, t, r, b = _tight_bbox(arr[:, :, 3])
     car = car_rgba.crop((l, t, r, b))
@@ -215,7 +215,9 @@ def make_reflection(car_img, x, y, contact_y, opacity=0.16):
 def composite(car_rgba, template_name):
     bg, floor_line_y, glossy = build_template(template_name)
     car = feather_edges(car_rgba)
-    car, x, y = autoscale_and_place(car, floor_line_y)
+    # sit the car DOWN on the floor (in front of the wall), not at the wall/floor line
+    car_ground = int(CANVAS_H * 0.74)
+    car, x, y = autoscale_and_place(car, car_ground)
     contact_y, fx0, fx1 = contact_info(car)
     if glossy:
         bg.alpha_composite(make_reflection(car, x, y, contact_y))
