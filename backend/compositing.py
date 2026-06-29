@@ -176,7 +176,10 @@ def feather_edges(car_rgba):
     else:                                              # safe fallback if pkg missing
         rgb_out = np.array(_decontaminate(car_rgba))[:, :, :3]
 
-    a8 = arr[:, :, 3]
+    # tighten BiRefNet's faint semi-transparent glow (the ghost rim), contract 1px, anti-alias
+    af = arr[:, :, 3].astype(np.float32) / 255.0
+    af = np.clip((af - 0.12) / 0.76, 0.0, 1.0)        # drop <0.12 glow, keep a soft true edge
+    a8 = (af * 255).astype(np.uint8)
     a8 = cv2.erode(a8, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=1)
     a8 = cv2.GaussianBlur(a8, (3, 3), 0)
     return Image.fromarray(np.dstack([rgb_out, a8]), mode="RGBA")
